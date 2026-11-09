@@ -1,0 +1,68 @@
+name: FFXV Development Build
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - ".github/workflows/ffxv-development-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ffxv:
+    name: Build Final Fantasy XV (Development-Release x64)
+    runs-on: windows-2025-vs2026
+    steps:
+      - name: Checkout source and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Integrate vcpkg with MSBuild
+        shell: pwsh
+        run: '& "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" integrate install'
+
+      - name: Create a solution filter for FFXV only
+        shell: pwsh
+        run: |
+          $filter = @{
+            solution = @{
+              path = "Luma.sln"
+              projects = @("Source\Games\Final Fantasy XV\Final Fantasy XV.vcxproj")
+            }
+          }
+          $filter | ConvertTo-Json -Depth 4 | Set-Content -Path "Luma-FFXV-Dev.slnf" -Encoding utf8
+
+      - name: Build FFXV development addon
+        shell: pwsh
+        run: |
+          msbuild "Luma-FFXV-Dev.slnf" /m /p:Configuration=Development-Release /p:Platform=x64 /p:DefineConstants="REMOTE_BUILD=1" /v:minimal
+          if ($LASTEXITCODE -ne 0) {
+            throw "FFXV Development-Release build failed (MSBuild exit code $LASTEXITCODE)."
+          }
+
+      - name: Verify build output
+        shell: pwsh
+        run: |
+          $addon = "Binaries\x64-Development-Release\Luma-Final Fantasy XV.addon"
+          if (-not (Test-Path $addon)) {
+            Get-ChildItem -Path "Binaries" -Recurse -Filter "*.addon" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+            throw "Expected FFXV addon was not produced: $addon"
+          }
+          Write-Host "Build succeeded: $addon"
+          Get-Item $addon | Format-List Name,Length,LastWriteTime
+
+      - name: Upload FFXV development addon
+        uses: actions/upload-artifact@v4
+        with:
+          name: Luma-FFXV-Development-Release-x64
+          path: Binaries/x64-Development-Release/Luma-Final Fantasy XV.addon
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
